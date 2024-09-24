@@ -1,0 +1,158 @@
+import { IS_ANDROID_WEB_VIEW } from '../../util/is-android-web-view';
+import { AndroidInterface } from './android-interface';
+import { nanoid } from 'nanoid';
+import { BehaviorSubject, merge, Subject } from 'rxjs';
+import { mapTo } from 'rxjs/operators';
+
+export const androidInterface: AndroidInterface = (window as any).SUPAndroid;
+
+if (IS_ANDROID_WEB_VIEW) {
+  if (!androidInterface) {
+    throw new Error('Cannot initialize androidInterface');
+  }
+
+  androidInterface.onResume$ = new Subject();
+  androidInterface.onPause$ = new Subject();
+  androidInterface.onPauseCurrentTask$ = new Subject();
+  androidInterface.onMarkCurrentTaskAsDone$ = new Subject();
+  androidInterface.onAddNewTask$ = new Subject();
+  androidInterface.isKeyboardShown$ = new BehaviorSubject(false);
+
+  androidInterface.isInBackground$ = merge(
+    androidInterface.onResume$.pipe(mapTo(false)),
+    androidInterface.onPause$.pipe(mapTo(true)),
+  );
+
+  const requestMap: {
+    [key: string]: {
+      resolve: (returnVal?: any) => void;
+      reject: (error?: any) => void;
+    };
+  } = {};
+
+  const getRequestMapPromise = (rId: string): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      requestMap[rId] = { resolve, reject };
+    });
+  };
+
+  if (androidInterface.saveToDbNew) {
+    androidInterface.saveToDbCallback = (rId: string) => {
+      requestMap[rId].resolve();
+      delete requestMap[rId];
+    };
+  }
+  androidInterface.saveToDbWrapped = (key: string, value: string): Promise<void> => {
+    if (androidInterface.saveToDbNew) {
+      const rId = nanoid();
+      androidInterface.saveToDbNew(rId, key, value);
+      return getRequestMapPromise(rId);
+      // legacy stuff, changed in newer versions of the android app
+      // TODO remove if gone
+    } else if (androidInterface.saveToDb) {
+      androidInterface.saveToDb(key, value);
+      return new Promise((resolve, reject) => {
+        // NOTE currently there is no error handling
+        (window as any).saveToDbCallback = () => {
+          resolve();
+        };
+      });
+    } else {
+      throw new Error('No android save to db interface');
+    }
+  };
+
+  if (androidInterface.loadFromDbNew) {
+    androidInterface.loadFromDbCallback = (rId: string, k: string, result?: string) => {
+      requestMap[rId].resolve(result || null);
+      delete requestMap[rId];
+    };
+  }
+  androidInterface.loadFromDbWrapped = (key: string): Promise<string | null> => {
+    if (androidInterface.loadFromDbNew) {
+      const rId = nanoid();
+      androidInterface.loadFromDbNew(rId, key);
+      return getRequestMapPromise(rId);
+      // legacy stuff, changed in newer versions of the android app
+      // TODO remove if gone
+    } else if (androidInterface.loadFromDb) {
+      androidInterface.loadFromDb(key);
+      return new Promise((resolve, reject) => {
+        // NOTE currently there is no error handling
+        (window as any).loadFromDbCallback = (k: string, result?: string) => {
+          resolve(result || null);
+        };
+      });
+    } else {
+      throw new Error('No android loadFromDb interface');
+    }
+  };
+
+  androidInterface.removeFromDbWrapped = (key: string): Promise<void> => {
+    const rId = nanoid();
+    androidInterface.removeFromDb?.(rId, key);
+    return getRequestMapPromise(rId);
+  };
+  androidInterface.removeFromDbCallback = (rId: string) => {
+    requestMap[rId].resolve();
+    delete requestMap[rId];
+  };
+
+  androidInterface.clearDbWrapped = (): Promise<void> => {
+    const rId = nanoid();
+    androidInterface.clearDb?.(rId);
+    return getRequestMapPromise(rId);
+  };
+  androidInterface.clearDbCallback = (rId: string) => {
+    requestMap[rId].resolve();
+    delete requestMap[rId];
+  };
+
+  if (androidInterface.makeHttpRequest) {
+    androidInterface.makeHttpRequestCallback = (rId: string, result: object) => {
+      requestMap[rId].resolve(result);
+      delete requestMap[rId];
+    };
+  }
+  androidInterface.makeHttpRequestWrapped = (
+    url: string,
+    method: string,
+    data: string,
+    username: string,
+    password: string,
+    readResponse: boolean,
+  ): Promise<object> => {
+    if (androidInterface.makeHttpRequest) {
+      const rId = nanoid();
+      androidInterface.makeHttpRequest(
+        rId,
+        url,
+        method,
+        data,
+        username,
+        password,
+        readResponse,
+      );
+      return getRequestMapPromise(rId);
+    } else {
+      throw new Error('No android makeHttpRequest interface');
+    }
+  };
+
+  androidInterface.isGrantFilePermissionInProgress = false;
+
+  androidInterface.grantFilePermissionWrapped = (): Promise<object> => {
+    androidInterface.isGrantFilePermissionInProgress = true;
+    const rId = nanoid();
+    androidInterface.grantFilePermission(rId);
+    return getRequestMapPromise(rId);
+  };
+
+  androidInterface.grantFilePermissionCallBack = (rId: string) => {
+    androidInterface.isGrantFilePermissionInProgress = false;
+    requestMap[rId].resolve();
+    delete requestMap[rId];
+  };
+
+  console.log('Android Web View interfaces initialized', androidInterface);
+}
